@@ -76,7 +76,7 @@ class Model(nn.Module):
         self.enemy2_state_layer = AgentStateLayer()
         # self.skill_layer = SkillLayer()
         self.share_layer_dim = self.global_state_layer_dim + self.agent_state_layer_dim * 6
-        self.share_layer = nn.Sequential(nn.Linear(self.share_layer_dim, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU())
+        self.share_layer = nn.Sequential(nn.Linear(self.share_layer_dim, 256), nn.ReLU(),nn.Linear(256, 128), nn.ReLU())
         self.value_layer = nn.Sequential(nn.Linear(128, 1))
         self.action_layer = nn.Sequential(nn.Linear(128, 52))
         self.opt = optim.Adam(self.parameters(), lr=1e-3)
@@ -281,6 +281,6 @@ class CustomedAgent():
 if __name__ == '__main__':
     import json
     agent = CustomedAgent()
-    with open('states.json', 'r') as f:
+    with open('D:\\1_GitProject\\3_1_DunkCityDynasty\\states_example.json', 'r') as f:
         state_infos = json.load(f)
     print(agent.act(state_infos))

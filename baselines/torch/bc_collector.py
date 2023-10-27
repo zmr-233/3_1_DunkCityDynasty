@@ -9,6 +9,7 @@ import torch.nn.utils.rnn as rnn_utils
 import numpy as np
 from baselines.common.wrappers import BCWrapper
 
+
 def collate_fn(batch):
     global_state = rnn_utils.pad_sequence([torch.from_numpy(x[0]) for x in batch], batch_first=True, padding_value=0.0)
     self_state = rnn_utils.pad_sequence([torch.from_numpy(x[1]) for x in batch], batch_first=True, padding_value=0.0)

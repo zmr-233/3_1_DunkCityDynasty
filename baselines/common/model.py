@@ -90,7 +90,7 @@ class Model(nn.Module):
         enemy0_feature = states[4]
         enemy1_feature = states[5]
         enemy2_feature = states[6]
-        if len(states) > 7: # action mask for rl training
+        if len(states) > 7: #action_mask动作掩码，不知道是否由环境返回？
             action_mask = states[7].float()
         global_feature = self.global_state_layer(global_feature)
         self_feature = self.self_state_layer(self_feature)
@@ -99,13 +99,16 @@ class Model(nn.Module):
         enemy0_feature = self.enemy0_state_layer(enemy0_feature)
         enemy1_feature = self.enemy1_state_layer(enemy1_feature)
         enemy2_feature = self.enemy2_state_layer(enemy2_feature)
-        # skill_feature = self.skill_layer(action_mask)
+        # skill_feature = self.skill_layer(action_mask) 
+        #🟠❓这里是技能👆？
         x = torch.cat([global_feature,self_feature, ally0_feature, ally1_feature, enemy0_feature, enemy1_feature, enemy2_feature], dim=1)
-        x = self.share_layer(x.float())
-        value = self.value_layer(x)
-        logits_p = self.action_layer(x)
-        if len(states) > 7:
+        x = self.share_layer(x.float());\
+            value = self.value_layer(x);\
+            logits_p = self.action_layer(x) #🟠注意这里直接返回的就是log(probs)!!!
+        if len(states) > 7: #🔵调整 logits_p:掩码为0的动作被设置为一个非常小的负数
+            #softmax 函数转换为概率时，这些动作的概率将接近于0，从而确保代理不会选择它们
             large_negative = torch.finfo(logits_p.dtype).min if logits_p.dtype == torch.float32 else 1e-9
+            #👆对于torch.float32这个值接近于-3.4*10^38，但这简直就是句废话
             mask_logits_p = logits_p * action_mask + (1 - action_mask) * large_negative
             probs = nn.functional.softmax(mask_logits_p, dim=1)
             return value.float(), probs.float()

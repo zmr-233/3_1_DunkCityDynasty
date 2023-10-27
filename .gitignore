@@ -9,3 +9,7 @@ ray_results
 .vscode
 output
 test.py
+
+**/human_data
+
+**/tmp 

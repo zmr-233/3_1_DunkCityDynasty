@@ -3,6 +3,7 @@ import random
 import numpy as np
 from glob import glob
 from huggingface_hub import hf_hub_download
+from zmr_deb import deb
 
 def download_human_data(download_path):
     for filename in [f"DATA_RELEASE_{i}.zip" for i in range(10)]:
@@ -11,10 +12,25 @@ def download_human_data(download_path):
 
 
 def get_file_names(dir_path):
-    '''get all file names in the dir_path'''
+    '''
+    获取指定目录下所有的.json文件名。
+
+    参数:
+        dir_path (str): 指定的目录路径。
+
+    返回:
+        list: 包含所有.json文件的完整路径的列表。
+
+    说明:
+        本函数使用glob模块来搜索指定目录下的所有.json文件。
+        glob模块可以使用通配符来搜索文件。例如:
+            glob.glob('*.txt') 会返回当前目录下所有.txt文件。
+    '''
     file_names = glob(dir_path + '/*/*.json')
+    if deb: print(file_names)
     file_names = [file_name.replace('\\','/') for file_name in file_names]
     return file_names
+
 
 def read_one_file(file_path):
     '''read one file and return the sa_traj'''
@@ -56,6 +72,7 @@ def convert_to_batch(sa_traj,wrapper):
     return states_batch, action_batch
 
 def sample_batch(file_pointers,wrapper):
+    if deb == True :print(file_pointers)
     file_paths = random.sample(file_pointers, 3)
     actions = []
     global_state_batch = []

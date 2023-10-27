@@ -9,12 +9,14 @@ from baselines.common.utils import onehot
 from bc_utils import get_file_names, sample_batch, read_one_file, convert_to_batch
 from baselines.common.model import Model
 from baselines.common.wrappers import BCWrapper
-    
+from tqdm import tqdm
+from zmr_deb import deb
 class Policy(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.model = Model().to('cpu')
         self.update_step = 0
+    
     def sample_action(self, states):
         new_states = []
         for state in states:
@@ -25,8 +27,10 @@ class Policy(nn.Module):
         action = dist.sample()
         log_probs = dist.log_prob(action)
         return action.detach().numpy().item(),log_probs
+    
     def save_model(self, path):
         torch.save(self.model.state_dict(), path)
+    
     def evaluate(self, states, actions):
         value, probs = self.model(states)
         dist = torch.distributions.Categorical(probs)
@@ -44,7 +48,7 @@ class Policy(nn.Module):
         weights = [0.1] + [0.2] * 8 + [1.2] * 43
         weights = torch.tensor(weights,dtype=torch.float32)
         actions = torch.tensor(actions,dtype=torch.long).unsqueeze(1)
-        logit_p = self.model(states)
+        logit_p,_ = self.model(states) #++++++++++++++self.model(states) 返回了一个元组???
         predict_actions = logit_p.argmax(dim=1)
         acc = (predict_actions == actions.squeeze(dim=1)).sum().item() / len(actions)
         loss = F.cross_entropy(logit_p, actions.squeeze(dim=1), weight = weights)
@@ -55,7 +59,7 @@ class Policy(nn.Module):
     
 if __name__ == '__main__':
     
-    human_data_dir = "./human_data"
+    human_data_dir = "D:/1_GitProject/3_1_DunkCityDynasty/human_data"
     TOTAL_DIRS = [
         "DATA_RELEASE_NEW_HANDLED_0",
         "DATA_RELEASE_NEW_HANDLED_1",
@@ -64,14 +68,17 @@ if __name__ == '__main__':
     file_pointers = []
     for dir_name in TOTAL_DIRS:
         dir_name = f"{human_data_dir}/{dir_name}"
+        if deb : print(dir_name)
         file_names = get_file_names(dir_name)
         file_pointers += file_names
+        if deb : print(file_names)
     tb_writer = SummaryWriter(f"./output/logs/")
     wrapper = BCWrapper({})
     policy = Policy()
     num_epochs = 100000
+    print("Start")
     for epoch in range(num_epochs):
-        try: # avoid file read error
+        #try: # avoid file read error
             states_batch, action_batch = sample_batch(file_pointers,wrapper)
             loss,acc = policy.update(states_batch,action_batch)
             if epoch % 10 == 0:
@@ -80,5 +87,5 @@ if __name__ == '__main__':
             if epoch % 2000 == 0:
                 print(f"epoch:{epoch},loss:{loss},acc:{acc}")
                 policy.save_model(f"./output/bc_model")
-        except:
-            pass
+        #except:
+            #pass

@@ -29,7 +29,7 @@ class BaseEnv():
         self.game_server_ip = config['game_server_ip']
         self.game_server_port = config['game_server_port']
         self.user_name = config['user_name']
-        self.pid = -1 # game client pid
+        self.pid = None # game client pids 
         self.last_states = None # last states
         self.stream_data = {}
         if self.env_setting == 'linux':
@@ -166,7 +166,7 @@ class BaseEnv():
         if self.env_setting == 'win':
             # run game client 
             cmd = f"{self.client_path}/Lx33.exe {self.game_server_ip} {self.game_server_port} {self.rl_server_ip} {self.rl_server_port} {self.user_name}"
-            p = subprocess.Popen(cmd, shell=False)
+            p = subprocess.Popen(cmd, shell=True)
             self.pid = p.pid
 
         elif self.env_setting == 'linux':

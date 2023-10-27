@@ -12,25 +12,31 @@ class Config:
     def __init__(self) -> None:
         self.seed = 0
         self.n_epoch = 10
-        self.data_path = "./human_data"
+        self.data_path = "D:\\1_GitProject\\3_1_DunkCityDynasty\\human_data"
         self.train_batchsize = 1
         self.test_batchsize = 4
         self.dataloader_n_workers = 4
         self.lr = 1e-4
-        self.device = torch.device('cpu')
+        self.device = torch.device('cuda')
 
 def train(cfg):
-    # download_human_data(cfg.data_path)
+    #download_human_data(cfg.data_path)
     all_seed(cfg.seed)
     train_dataset = BCDataset(cfg.data_path,is_train=True)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.train_batchsize, shuffle=True, num_workers=cfg.dataloader_n_workers,collate_fn=collate_fn,)
     test_dataset = BCDataset(cfg.data_path,is_train=False)
     model = Model().to(cfg.device)
+
+    model_parameters = torch.load("./output/bc_model")
+    model.load_state_dict(model_parameters)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     tb_writer = SummaryWriter(f"./output/logs/")
     step = 0
     for i_epoch in range(cfg.n_epoch):
         for i_batch, (global_state, self_state, ally0_state, ally1_state, enemy0_state, enemy1_state, enemy2_state, action, weight) in enumerate(train_dataloader):
+            model_parameters = torch.load("./output/bc_model")
+            model.load_state_dict(model_parameters)
             # squeeze when batch_size = 1
             global_state = global_state.squeeze(0).to(cfg.device)
             self_state = self_state.squeeze(0).to(cfg.device)
@@ -68,7 +74,8 @@ def train(cfg):
                 print(f'Epoch: {i_epoch}, Batch: {i_batch}, Loss: {loss.item()}, test_acc: {test_accuracy}')
                 tb_writer.add_scalar('loss', loss, step)
                 tb_writer.add_scalar('acc', test_accuracy, step)
-        torch.save(model.state_dict(), f"./output/bc_model")
+                torch.save(model.state_dict(), f"./output/bc_model")
+
 
 if __name__ == '__main__':
     cfg = Config()
