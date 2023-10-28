@@ -76,6 +76,8 @@ class Model(nn.Module):
         self.enemy2_state_layer = AgentStateLayer()
         # self.skill_layer = SkillLayer()
         self.share_layer_dim = self.global_state_layer_dim + self.agent_state_layer_dim * 6
+        #-------------------🟠👆share_layer之前的所有部分，都是在处理和表示状态
+        #而share_layer得到的，才是PPO中通用意义上给actor和critic的"state"
         self.share_layer = nn.Sequential(nn.Linear(self.share_layer_dim, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU())
         self.value_layer = nn.Sequential(nn.Linear(128, 1))
         self.action_layer = nn.Sequential(nn.Linear(128, 52))
@@ -99,7 +101,7 @@ class Model(nn.Module):
         enemy0_feature = self.enemy0_state_layer(enemy0_feature)
         enemy1_feature = self.enemy1_state_layer(enemy1_feature)
         enemy2_feature = self.enemy2_state_layer(enemy2_feature)
-        # skill_feature = self.skill_layer(action_mask) 
+        #skill_feature = self.skill_layer(action_mask) 
         #🟠❓这里是技能👆？
         x = torch.cat([global_feature,self_feature, ally0_feature, ally1_feature, enemy0_feature, enemy1_feature, enemy2_feature], dim=1)
         x = self.share_layer(x.float());\
