@@ -477,7 +477,7 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
             #换句话说，我们不希望处理那些在某些字典中缺失数据的智能体
             #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             from pprint import pprint
-            if_use_states_key = True
+            if_use_states_key = False
 
             if if_use_states_key:
                 for key in states.keys():
@@ -495,6 +495,7 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                     print("--------------------------")
             if_tmp = 1
             #pprint(rewards)
+            pprint(infos)
             #=====================================================================================================
             for key in rewards.keys():
                 ep_rewards[key] += rewards[key]
