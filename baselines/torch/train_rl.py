@@ -450,6 +450,9 @@ class ZmrRecorder:
 
 def v2_train(*,env, policy,stats_recorder=None,model_version):
     model_parameters = torch.load(f'./tmp/model/v{model_version}_model')
+    is_not_train = True
+    if is_not_train:
+        policy.model.eval()
     policy.model.load_state_dict(model_parameters)
     if is_play: 
         policy.model.eval()
@@ -495,7 +498,8 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                     print("--------------------------")
             if_tmp = 1
             #pprint(rewards)
-            pprint(infos)
+            #pprint(infos)
+            pprint(truncated)
             #=====================================================================================================
             for key in rewards.keys():
                 ep_rewards[key] += rewards[key]
@@ -521,12 +525,12 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 exps.append(exp)
             if len(exps) >= 512:
                 policy.memory.push(exps)
-                policy.update(stats_recorder = stats_recorder,all_train_step=all_train_step)
+                #policy.update(stats_recorder = stats_recorder,all_train_step=all_train_step)
                 exps = []
                 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 print(f'{all_train_step}SAVE_MODEL+++++++++++++++++++++++++++')
                 #policy.save_model(f'./tmp/model/v{model_version}_model')
-                torch.save(policy.model.state_dict(), f'./tmp/model/v{model_version}_model')
+                #torch.save(policy.model.state_dict(), f'./tmp/model/v{model_version}_model')
 
             if dones['__all__']:
                 break
