@@ -499,7 +499,9 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
             if_tmp = 1
             #pprint(rewards)
             #pprint(infos)
-            pprint(truncated)
+            pprint(rewards)
+            pprint(infos)
+            print("-----------------------------------------")
             #=====================================================================================================
             for key in rewards.keys():
                 ep_rewards[key] += rewards[key]
