@@ -3,6 +3,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 def embedding_layer(input_size, num_embeddings, embedding_dim, **kwargs):
@@ -54,6 +55,121 @@ class AgentStateLayer(nn.Module):
         x = torch.cat([my_character_type, my_role_type, my_buff_type, my_states], dim=1).float()
         x = self.linear_layer(x)
         return x
+def get_activation_func(name, hidden_dim):
+    """
+    'relu'
+    'tanh'
+    'leaky_relu'
+    'elu'
+    'prelu'
+    :param name:
+    :return:
+    """
+    if name == "relu":
+        return nn.ReLU(inplace=True)
+    elif name == "tanh":
+        return nn.Tanh()
+    elif name == "leaky_relu":
+        return nn.LeakyReLU(negative_slope=0.01, inplace=True)
+    elif name == "elu":
+        return nn.ELU(alpha=1., inplace=True)
+    elif name == 'prelu':
+        return nn.PReLU(num_parameters=hidden_dim, init=0.25)
+    
+class Hypernet(nn.Module):
+    def __init__(self,input_dim,hidden_dim,main_input_dim,main_output_dim,n_heads,*,activation_func):
+        '''权重生成网络
+
+        input_dim 用于描述特征的向量
+        main_input_dim 主要输入
+        main_output_dim 主要输出
+        n_heads 增加数量
+        '''
+        super().__init__()
+        self.main_input_dim = main_input_dim
+        self.main_output_dim = main_output_dim
+        self.output_dim = main_input_dim * main_output_dim
+        self.activation_func = activation_func
+        self.n_heads = n_heads
+        
+        self.multihead_nn = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            get_activation_func(self.activation_func, hidden_dim),
+            nn.Linear(hidden_dim, self.output_dim * self.n_heads),
+        )
+    
+    def forward(self,x):
+        #[batch_size,main_input_dim * main_output_dim * self.n_heads]->[batch_size,main_input_dim, main_output_dim * self.n_heads]
+        return self.multihead_nn(x).view([-1,self.main_input_dim, self.main_output_dim * self.n_heads]) #BUG:是否需要vie([-1,?])
+
+class TestAgentStateLayer(nn.Module):
+    def __init__(self,rnn_hidden_dim,*,hpn_net) -> None:
+        super().__init__()
+        #RNN
+        self.rnn_hidden_dim = rnn_hidden_dim
+        self.agent_state_len = 73
+        self.my_character_type_embed_layer, self.my_character_type_embed_layer_out_dim = embedding_layer([None], 100, 16)
+        self.my_role_type_embed_layer, self.my_role_type_embed_layer_out_dim = embedding_layer([None], 8 ,8)
+        self.my_buff_type_embed_layer, self.my_buff_type_embed_layer_out_dim = embedding_layer([None], 50, 6)
+        self.agent_state_dim = 16+8+6-3 + self.agent_state_len
+        self.out_dim = 128
+        #self.linear_layer, self.linear_layer_out_dim = linear_layer([None, self.agent_state_dim], self.out_dim)
+        #使用HPN层
+        self.hpn = hpn_net
+
+    def forward(self, x):
+        my_character_type = x[:, 0].long()
+        my_role_type = x[:, 1].long()
+        my_buff_type = x[:, 2].long()
+        my_character_type = self.my_character_type_embed_layer(my_character_type)
+        my_role_type = self.my_role_type_embed_layer(my_role_type)
+        my_buff_type = self.my_buff_type_embed_layer(my_buff_type)
+        
+        my_states = x[:,3:].float()
+        #x = torch.cat([my_character_type, my_role_type, my_buff_type, my_states], dim=1).float()
+        #x = self.linear_layer(x)
+        x = torch.cat([my_character_type, my_role_type, my_buff_type], dim=1).float()
+        #[batch_size,main_input_dim, main_output_dim * self.n_heads]
+        input_w_agent = self.hpn(x)
+        #[batch_size,main_input_dim] * [batch_size,main_input_dim, main_output_dim * n_heads] ->[batch_size, n_heads, rnn_hidden_dim * n_heads]
+        embedding_agent = torch.matmul(my_states.unsqueeze(1), input_w_agent).view(
+            -1, self.n_heads, self.rnn_hidden_dim 
+        )#[batch_size,n_heads,rnn_hidden_dim]
+        #BUG:需要确保 main_output_dim = rnn_hidden_dim，否则这个重塑会出错
+        return embedding_agent
+
+class TestPolicy(nn.Module):
+    def __init__(self,hpn_hidden_dim,rnn_hidden_dim,n_heads):
+        #RNN维度
+        self.rnn_hidden_dim = rnn_hidden_dim
+        #HPN角色特征
+        #-----临时决定:
+            #self.my_character_type_embed_layer_out_dim = 16
+            #self.my_role_type_embed_layer_out_dim = 8
+            #self.my_buff_type_embed_layer_out_dim = 6
+        #HPN隐藏网络
+        self.hpn_hidden_dim = hpn_hidden_dim
+        self.n_heads = n_heads
+        #HPN主要状态特征
+        self.agent_state_len = 73
+        self.agent_state_dim = 16+8+6-3 + self.agent_state_len
+        self.hpn_input_net = Hypernet(16+8+6,
+                                    self.hpn_hidden_dim,
+                                    self.agent_state_dim,rnn_hidden_dim,
+                                    n_heads,activation_func='relu'
+                                    )
+        #RNN层
+        self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
+        #混合乘积层
+        self.self_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        self.ally0_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        self.ally1_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        self.enemy0_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        self.enemy1_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        self.enemy2_state_layer = TestAgentStateLayer(rnn_hidden_dim,hpn_net=hpn_hidden_dim)
+        pass
+
+
 
 class Model(nn.Module):
     def __init__(self) -> None:
@@ -99,7 +215,7 @@ class Model(nn.Module):
         mask_logits_p = logits_p * action_mask + (1 - action_mask) * large_negative
         probs = nn.functional.softmax(mask_logits_p, dim=1)
         return value.float(), probs.float()
-    
+        
 def onehot(num, size):
     """
     """

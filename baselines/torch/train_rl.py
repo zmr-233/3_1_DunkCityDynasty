@@ -413,7 +413,7 @@ def v1_main():
                 exps.append(exp)
             if len(exps) >= 512:
                 policy.memory.push(exps)
-                print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+                print("+++++++++++++++++++++++/++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
                 policy.update(stats_recorder = stats_recorder)
                 try:
                     policy.save_model(f"./output/bc_model")
@@ -497,10 +497,10 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                     pprint(states[key])
                     print("--------------------------")
             if_tmp = 1
-            #pprint(rewards)
-            #pprint(infos)
             pprint(rewards)
-            pprint(infos)
+            #pprint(infos)
+            #pprint(rewards)
+            #pprint(actions)
             print("-----------------------------------------")
             #=====================================================================================================
             for key in rewards.keys():
