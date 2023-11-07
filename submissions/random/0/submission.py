@@ -38,7 +38,33 @@ class ActionEmbedding(nn.Module):
     def forward(self, action_indices):
         return self.embedding(action_indices)
 #c.多头合并层-----------------------------------------------------------------------------------------
-class Merger(nn.Module):
+class Merger_1(nn.Module):
+    def __init__(self, head, fea_dim):
+        '''合并[batch_size, n_heads, fea_dim]->[batch_size, fea_dim]
+        
+        '''
+        super().__init__()
+        self.head = head
+        self.fea_dim = fea_dim
+        if head > 1:
+            self.weight = nn.Parameter(torch.Tensor(1, head, fea_dim).fill_(1.))
+            self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        '''合并 [batch_size, 1, n_heads, fea_dim]->[batch_size, fea_dim]
+
+        :param x: [bs, n_head, fea_dim]
+        :return: [bs, fea_dim]
+        '''
+        if self.head > 1:
+            batch_size = x.size(0)
+            weight = self.weight.expand(batch_size, -1, -1)
+            weighted_x = self.softmax(weight) * x
+            return torch.sum(weighted_x, dim=1)
+        else:
+            return x.squeeze(1)
+
+class Merger_2(nn.Module):
     def __init__(self, head, fea_dim):
         super().__init__()
         self.head = head
@@ -53,11 +79,6 @@ class Merger(nn.Module):
         :param x: [bs, n_head, fea_dim]
         :return: [bs, fea_dim]
         """
-        if self.use_old == True:
-            if self.head > 1:
-                return torch.sum(self.softmax(self.weight) * x, dim=1, keepdim=False)
-            else:
-                return torch.squeeze(x, dim=1)
         #BUG:
         if self.head > 1:
             batch_size = x.size(0)
@@ -246,12 +267,16 @@ class AgentLayer(nn.Module):
 
 #=================================================================================================    
 class TestPolicy(nn.Module):
-    def __init__(self,hpn_hidden_dim,rnn_hidden_dim,n_heads):
+    def __init__(self,
+                 hpn_hidden_dim,rnn_hidden_dim,
+                 n_heads_input,n_heads_output):
         super().__init__()
         #形状信息
         self.hpn_hidden_dim = hpn_hidden_dim
         self.rnn_hidden_dim = rnn_hidden_dim if rnn_hidden_dim is not None else 128 #🟠BUG:玄学调参
-        self.n_heads = n_heads #切记不可太高，否则....
+        #BUG:细分---------------------self.n_heads = n_heads #切记不可太高，否则....
+        self.n_heads_input = n_heads_input #这是合并输入
+        self.n_heads_output = n_heads_output #这是技能动作输出的多头
         self.use_bias = True #是output专有动作时候使用
         
         #(1)states_embedding层--所有人共用一个 转为特征向量
@@ -279,10 +304,15 @@ class TestPolicy(nn.Module):
             use_bias = True
         )
         
-        #(3)合并层--用于合并HPN产生的多头[bs, n_head, fea_dim]->[bs, fea_dim]
-        self.unify_input_heads = Merger(self.n_heads, self.rnn_hidden_dim)
+        #(3)合并层--用于合并HPN产生的多头
+        #[bs, n_head, fea_dim]->[bs, fea_dim]
+        self.unify_input_heads = Merger_1(self.n_heads_input, self.rnn_hidden_dim)
+        #[batch_size, 1, n_heads, fea_dim]->[bs, fea_dim]
+        self.unify_output_heads = Merger_2(self.n_heads_output, 52-12) 
         
         #(4)RNN层
+        #使用 nn.GRUCell处理单个时间步长的输入
+        #
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         
         #A-公有动作层
@@ -312,9 +342,11 @@ class TestPolicy(nn.Module):
         #(1)Global层
         self.global_state_layer = GlobalLayer(rnn_hidden_dim) #直接线性层
         
-        #(2)Self层 -- 不需要超网络
+        #(2)Self层 分为critic和actor网络
         self.self_state_layer = SelfLayer(rnn_hidden_dim)
-    
+        self.self_state_layer_2 = AgentLayer(rnn_hidden_dim,self.n_heads,
+                                            self.agent_embedding_net,self.hyper_input_w_ally)
+
         #(3)ally层 -- 其中没有新增任何神经网络-相当于集成
         self.ally0_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
                                             self.agent_embedding_net,self.hyper_input_w_ally)
@@ -328,7 +360,7 @@ class TestPolicy(nn.Module):
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
         self.enemy2_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
-        
+
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         #定义share层
@@ -359,14 +391,17 @@ class TestPolicy(nn.Module):
             action_mask = states[7].float()
         #(1)Global层
         global_embedding = self.global_state_layer(global_feature)
+        
         #(2)Self层 
-        self_feats,self_embedding = self.self_state_layer(self_feature)
+        self_feats, self_embedding = self.self_state_layer(self_feature)
+
         #(3)ally层 
         ally0_feature = self.ally0_state_layer(ally0_feature)
         ally1_feature = self.ally1_state_layer(ally1_feature)
-        ally_embedding = self.unify_input_heads(
+        ally_embedding = self.unify_input_heads( 
             ally0_feature + ally1_feature
         )
+
         #(4)enemy层
         enemy0_feature = self.enemy0_state_layer(enemy0_feature)
         enemy1_feature = self.enemy1_state_layer(enemy1_feature)
@@ -376,12 +411,18 @@ class TestPolicy(nn.Module):
         )
 
         #a.合并层
+        #BUG:此处使用加法层==========================================================================================
         embedding = global_embedding + self_embedding + ally_embedding + enemy_embedding
+        
+        self_embedding_2 = self.self_state_layer_2(self_feature)
+        ally_embedding_2 = ally_embedding + self.unify_input_heads(self_embedding_2)
+        embedding_critic = torch.cat([global_embedding,ally_embedding_2,enemy_embedding],dim = 1).float()
 
+        #==============================================Actor网络====================================================
         #b.激活和RNN
         x = F.relu(embedding, inplace=True)
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
-        hh = self.rnn(x, h_in)  # [bs * n_agents, rnn_hidden_dim]
+        hh = self.rnn(x, h_in)  # [bs, rnn_hidden_dim]
 
         #c.计算公有动作的价值
         q_normal = self.output_normal_actions(hh).view(-1, self.n_agents, 12)  # [bs, n_agents, 12]
@@ -390,35 +431,38 @@ class TestPolicy(nn.Module):
         #Part1-生成权重
         # agent_feats为[batch_size, agent_feature_dim]
         # 初始输出-> [batch_size, rnn_hidden_dim * 40 * n_heads]
-        output_w_special, _ = self.hyper_output_w_action(self_feats).view(
-            -1, self.rnn_hidden_dim, 40 * self.n_heads  #改变形状->[batch_size, rnn_hidden_dim, 40 * n_heads]
-        ).transpose(1, 2).reshape(  # 交换第二和第三维->[batch_size, 40 * n_heads, rnn_hidden_dim]
-            -1, 40, self.rnn_hidden_dim * self.n_heads  
-        )#->[batch_size, 40, rnn_hidden_dim * n_heads]
+        output_w_special, _ = self.hyper_output_w_action(self_feats)
+        
+        #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        output_w_special = output_w_special.view(-1, 40 * self.n_heads, self.rnn_hidden_dim).transpose(1, 2)
 
         #Part2-生成偏置
-        #->[batch_size, 40 * n_heads]
-        output_b_special = self.hyper_output_b_action(self_feats).view(
-            -1, 40 * self.n_heads  #->[batch_size, 40 * n_heads]
-        )
-        # 假设 self_hidden_state 的形状为 [batch_size, 1, rnn_hidden_dim]
+        output_b_special = self.hyper_output_b_action(self_feats).view( -1 ,40 * self.n_heads)  
         
         # Part3-计算Q值------通过矩阵乘法计算每个专有动作的Q值
         # [batch_size, 1, rnn_hidden_dim] * [batch_size, rnn_hidden_dim, 40 * n_heads] = [batch_size, 1, 40 * n_heads]
-        q_values = torch.matmul(hh, output_w_special.transpose(1, 2)) #BUG:hh.unsqueeze(1)???
+        #BUG:错误的q_values计算---------------------------------------------------------------------------
+        q_values = torch.matmul(hh.unsqueeze(1), output_w_special) #BUG:hh.unsqueeze(1)??????
 
         if self.use_bias:
             # 增加一个维度使偏置与q_values的形状匹配
-            q_values += output_b_special.unsqueeze(1)
-
-        # 现在 q_values 的形状为 [batch_size, 1, 40 * n_heads]
-        # 如果有必要，可以通过使用合适的方法来组合多个头的Q值，例如取平均值或者使用额外的层来减少维度
-        # 假设 self.unify_output_heads 是一个方法来合并n_heads的输出
+            q_values += output_b_special.unsqueeze(1) #->[batch_size, 1, 40 * n_heads]
+        
+        #BUG:多余的平均值合并--------------------------------------------------
+        #-->[batch_size, 1, 40 * n_heads]->[batch_size, 1, 40, n_heads]
+        #q_values_unified = q_values.view(-1, 1, 40, self.n_heads).mean(dim=-1)
+        
+        #使用复杂的权重矩阵合并+++++++++++++++++++++++++++++++++++++++++++++++++
+        #->[batch_size, 1, 40, n_heads]-->[batch_size, 40]
         q_values = self.unify_output_heads(q_values)
-
-        # 最终的Q值形状应该是 [batch_size, 40]
         # 这里需要确保 unify_output_heads 方法输出正确的形状
 
-
-
         
+        q = torch.cat([q_normal,q_values],dim=-1)
+
+        #转为概率
+        action_probs = F.softmax(q, dim=-1)
+        #==============================================Critic网络====================================================
+
+
+
