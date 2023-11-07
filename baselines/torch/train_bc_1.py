@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from baselines.common.utils import onehot
 from bc_utils import get_file_names, sample_batch, read_one_file, convert_to_batch
 from baselines.common.model import Model
-from baselines.common.wrappers import BCWrapper
+from baselines.common.wrappers import BCWrapper #关键导入
 from tqdm import tqdm
 from zmr_deb import deb
 class Policy(nn.Module):
