@@ -75,7 +75,7 @@ def get_activation_func(name, hidden_dim):
         return nn.ELU(alpha=1., inplace=True)
     elif name == 'prelu':
         return nn.PReLU(num_parameters=hidden_dim, init=0.25)
-    
+#-----------------------------------------------------------------------------------------------------------    
 class Hypernet(nn.Module):
     def __init__(self,input_dim,hidden_dim,main_input_dim,main_output_dim,n_heads,*,activation_func):
         '''权重生成网络
@@ -101,7 +101,7 @@ class Hypernet(nn.Module):
     def forward(self,x):
         #[batch_size,main_input_dim * main_output_dim * self.n_heads]->[batch_size,main_input_dim, main_output_dim * self.n_heads]
         return self.multihead_nn(x).view([-1,self.main_input_dim, self.main_output_dim * self.n_heads]) #BUG:是否需要vie([-1,?])
-
+#-----------------------------------------------------------------------------------------------------------
 class GlobalLayer(nn.Module):
     def __init__(self,rnn_hidden_dim) -> None:
         super().__init__()
