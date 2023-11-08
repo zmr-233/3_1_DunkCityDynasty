@@ -56,8 +56,9 @@ class zmrPolicy(nn.Module):
         #🔴打印出形状
         #BUG:-------------------原因：GRU可以处理None
         #BUG:self.hidden_state_SamAct = self.hidden_state_SamAct if self.hidden_state_SamAct is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
-        value, probs, hh = self.model(new_states,self.hidden_state_SamAct)
-        self.hidden_state_SamAct = hh
+        #🐞value, probs, hh = self.model(new_states,self.hidden_state_SamAct)
+        value, probs = self.model(new_states,self.hidden_state_SamAct)
+        #🐞self.hidden_state_SamAct = hh
         #🔴六个智能体共用一个self.hidden_state?????
         #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         dist = torch.distributions.Categorical(probs)
@@ -101,8 +102,9 @@ class zmrPolicy(nn.Module):
         #++++++++++++++++++++++++++++++++++++++++++++++++++++
         #BUG:-------------------原因：GRU可以处理None
         #self.hidden_state_Eva = self.hidden_state_Eva if self.hidden_state_Eva is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
-        value, probs, hh = self.model(states,self.hidden_state_Eva)
-        self.hidden_state_Eva = hh
+        #🐞value, probs, hh = self.model(states,self.hidden_state_Eva)
+        value, probs = self.model(states,self.hidden_state_Eva)
+        #🐞self.hidden_state_Eva = hh
         #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         dist = torch.distributions.Categorical(probs)
         log_probs = dist.log_prob(actions.squeeze(dim=1))
@@ -143,7 +145,7 @@ class zmrPolicy(nn.Module):
         rewards = torch.tensor(np.array(rewards),dtype=torch.float32)
         dones = torch.tensor(np.array(dones),dtype=torch.float32)
         returns = self._compute_returns(rewards, dones)
-        for _ in range(2):
+        for i in range(2):
             for states, actions, returns, old_log_probs in self.sgd_iter(states, actions, returns, old_log_probs):
                 values, log_probs, entropys = self.evaluate(states, actions)
                 advantages = returns - values.detach()
@@ -154,7 +156,7 @@ class zmrPolicy(nn.Module):
                 critic_loss = nn.MSELoss()(returns,values)
                 tot_loss = actor_loss + 0.5 * critic_loss
                 self.model.opt.zero_grad()
-                tot_loss.backward()
+                tot_loss.backward(retain_graph=True) if i == 0 else tot_loss.backward()
                 self.model.opt.step()
                 if stats_recorder is not None:
                     self.update_step += 1
@@ -336,9 +338,10 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
     #==================================🟠👆注意这个log_probs是从policy里出来的
                 exp = Exp(state=state,next_state=next_state,action=action,reward=reward,done=done,log_probs=log_probs,truncated=truncat)
                 exps.append(exp)
-            if len(exps) >= 512:
+            #🐞if len(exps) >= 512:
+            if len(exps) >= 12:
                 policy.memory.push(exps)
-                #policy.update(stats_recorder = stats_recorder,all_train_step=all_train_step)
+                policy.update(stats_recorder = stats_recorder,all_train_step=all_train_step)
                 exps = []
                 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 print(f'{all_train_step}SAVE_MODEL+++++++++++++++++++++++++++')
@@ -346,13 +349,14 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 #torch.save(policy.model.state_dict(), f'./tmp/model/hpn_v{model_version}_model')
                 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 # 确保路径存在
-                #os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
                 # 保存模型的状态字典
-                #torch.save(policy.model.state_dict(), model_path)
-
-            if dones['__all__']:
-                break
+                torch.save(policy.model.state_dict(), model_path)
             states = next_states
+            if dones['__all__']:
+                env.close()
+                break
+            
 
 
 def v2_main(*,version,model_version):
@@ -363,4 +367,5 @@ def v2_main(*,version,model_version):
     stats_recorder.close()
 
 if __name__ == '__main__':
+    #torch.autograd.set_detect_anomaly(True)
     v2_main(version=1,model_version=1)

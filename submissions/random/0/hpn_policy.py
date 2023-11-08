@@ -285,7 +285,7 @@ class AgentLayer(nn.Module):
         
         output_agent = torch.matmul(hyper_input.unsqueeze(1), input_w_agent)
 
-        output_agent += input_b_agent ####🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
+        output_agent = output_agent + input_b_agent ####🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
         output_agent = output_agent.view(
             -1, self.n_heads, self.output_dim #BUG:需要确保 main_output_dim = output_dim，否则这个重塑会出错
         )#[batch_size,n_heads,output_dim]
@@ -297,8 +297,11 @@ class AgentLayer(nn.Module):
 class HPNPolicy(nn.Module):
     def __init__(self,
                  hpn_hidden_dim,rnn_hidden_dim,
-                 n_heads_input,n_heads_output):
+                 n_heads_input,n_heads_output,
+                 *,net_mode = 'rl'):
         super().__init__()
+        #训练模式
+        self.net_mode = net_mode
         #形状信息
         self.hpn_hidden_dim = hpn_hidden_dim
         self.rnn_hidden_dim = rnn_hidden_dim if rnn_hidden_dim is not None else 128 #🟠BUG:玄学调参
@@ -406,6 +409,9 @@ class HPNPolicy(nn.Module):
         
         # 定义优化器
         self.opt = optim.Adam(self.parameters(), lr=1e-3) #🔴如何初始化所有参数?
+
+        #🐞临时
+        self.h_in = None
     
     def forward(self,states,hidden_state):
         global_feature = states[0].float()
@@ -451,8 +457,34 @@ class HPNPolicy(nn.Module):
         #==============================================Actor网络====================================================
         #b.激活和RNN
         x = F.relu(embedding, inplace=True)
-        h_in = None if hidden_state is None else hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
-        hh = self.rnn(x, h_in)  # [bs, rnn_hidden_dim]
+        #🐞h_in = None if hidden_state is None else hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
+        
+        #BUG:BC中批次大小不同的问题-------------------------------------------
+        #++++++批次大小不同的问题🔴🔴🔴🔴🔴🔴🔴🔴🔴++++++++++++++++++++++
+        # 检查 self.h_in 是否存在，如果存在，检查批次大小是否需要调整
+        #if self.h_in is not None:
+        #    current_batch_size = x.size(0)  # 获取 x 的批次大小
+        #    h_in_batch_size = self.h_in.size(0)
+        #
+        #    if h_in_batch_size > current_batch_size:
+        #        self.h_in = self.h_in[:current_batch_size, :].contiguous()
+        #    elif h_in_batch_size < current_batch_size:
+        #        self.h_in = None
+        #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        #if self.h_in is not None:
+        #    current_batch_size = x.size(0)
+        #    h_in_batch_size = self.h_in.size(0)
+        #    if h_in_batch_size != current_batch_size:
+        #        print(f"{current_batch_size} -> {h_in_batch_size}")
+        #        self.h_in = None
+        #    else:
+        #        print(">",end='')
+        #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        if self.net_mode == 'rl':
+            hh = self.rnn(x, self.h_in)  # [bs, rnn_hidden_dim]
+            self.h_in = hh
+        elif self.net_mode == 'bc':
+            hh = self.rnn(x, None)
 
         #c.计算公有动作的价值
         q_normal = self.output_normal_actions(hh).view(-1, 12)  # [bs, n_agents, 12]
@@ -476,7 +508,7 @@ class HPNPolicy(nn.Module):
 
         if self.use_bias:
             # 增加一个维度使偏置与q_values的形状匹配
-            q_values += output_b_special#🔴不确定更改了HPN网络.unsqueeze(1) #🔴BUG:大更新->[batch_size, 1, 40 * n_heads]
+            q_values = q_values + output_b_special#🔴不确定更改了HPN网络.unsqueeze(1) #🔴BUG:大更新->[batch_size, 1, 40 * n_heads]
         
         #BUG:多余的平均值合并--------------------------------------------------
         #-->[batch_size, 1, 40 * n_heads]->[batch_size, 1, 40, n_heads]
@@ -501,11 +533,11 @@ class HPNPolicy(nn.Module):
             mask_q = q * action_mask + (1 - action_mask) * large_negative
             # 对调整后的logits应用softmax，转换为概率
             probs = nn.functional.softmax(mask_q, dim=-1)
-            return value.float(), probs.float(), hh
+            return value.float(), probs.float() #🐞,hh
         else:
             #BUG:如果没有掩码，直接对原始Q值应用softmax转换为概率
             probs = nn.functional.softmax(q, dim=-1)
-            return value.float(), probs.float(), hh
+            return value.float(), probs.float() #🐞,hh
         
 
 #=================================================================================================    
