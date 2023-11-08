@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from pprint import pprint
 
 #附属工具====================================================================================================
 #a.激活函数选择工具 ----------------------------------------------------------------------------------------------------
@@ -190,10 +191,16 @@ class Hypernet(nn.Module):
         #->[batch_size,main_input_dim, main_output_dim * self.n_heads]
         weights = self.multihead_weight_nn(x).view([-1, self.main_input_dim, self.main_output_dim * self.n_heads])
         
-        if self.use_bias == True:
-            #->[batch_size, main_output_dim * n_heads]
-            biases = self.multihead_bias_nn(x).view([-1, self.main_output_dim * self.n_heads])
+        if self.use_bias == True: 
             
+            #🔴BUG:RuntimeError-----------------------------------------------------------------
+            #->[batch_size, main_output_dim * n_heads]
+            #🔴output with shape [32, 1, 384] doesn't match the broadcast shape [32, 32, 384]
+            #biases = self.multihead_bias_nn(x).view([-1, self.main_output_dim * self.n_heads])
+            
+            #添加额外维度:+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            #->[batch_size,1, main_output_dim * n_heads]
+            biases = self.multihead_bias_nn(x).view([-1, 1, self.main_output_dim * self.n_heads])
             return weights, biases
         else:
             return weights
@@ -277,7 +284,8 @@ class AgentLayer(nn.Module):
         #output_agent = output_agent.view(-1, self.n_heads, self.output_dim)
         
         output_agent = torch.matmul(hyper_input.unsqueeze(1), input_w_agent)
-        output_agent += input_b_agent
+
+        output_agent += input_b_agent ####🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
         output_agent = output_agent.view(
             -1, self.n_heads, self.output_dim #BUG:需要确保 main_output_dim = output_dim，否则这个重塑会出错
         )#[batch_size,n_heads,output_dim]
@@ -468,7 +476,7 @@ class HPNPolicy(nn.Module):
 
         if self.use_bias:
             # 增加一个维度使偏置与q_values的形状匹配
-            q_values += output_b_special.unsqueeze(1) #🔴BUG:大更新->[batch_size, 1, 40 * n_heads]
+            q_values += output_b_special#🔴不确定更改了HPN网络.unsqueeze(1) #🔴BUG:大更新->[batch_size, 1, 40 * n_heads]
         
         #BUG:多余的平均值合并--------------------------------------------------
         #-->[batch_size, 1, 40 * n_heads]->[batch_size, 1, 40, n_heads]

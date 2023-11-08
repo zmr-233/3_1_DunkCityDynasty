@@ -346,9 +346,9 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 #torch.save(policy.model.state_dict(), f'./tmp/model/hpn_v{model_version}_model')
                 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 # 确保路径存在
-                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                #os.makedirs(os.path.dirname(model_path), exist_ok=True)
                 # 保存模型的状态字典
-                torch.save(policy.model.state_dict(), model_path)
+                #torch.save(policy.model.state_dict(), model_path)
 
             if dones['__all__']:
                 break
