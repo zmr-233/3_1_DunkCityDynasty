@@ -33,19 +33,30 @@ class zmrPolicy(nn.Module):
                                self.n_heads_input, self.n_heads_output).to('cpu')
         self.update_step = 0
     def sample_action(self, states):
+        #🔴此处是有问题------------------------------------------------------
         new_states = []
         for state in states:
             new_states.append(state[np.newaxis, :])
         new_states = [torch.tensor(state) for state in new_states]
         #+++++++++++++++++++++++++++++++++++++
         if_print_states_shape = True
-        batch_size = states.size(0)
+        #-------------------------
+        #BUG:batch_size = states.size(0)
+        #更改为++++++++++++
+        batch_size = len(states)
         #🔴👆这里我感觉迟早要出问题
-        if if_print_states_shape is True:
-            print(f"#1-@zmrP@sample_action@states形状: {states.size()}")
+        #BUG-----------------------------------
+        #if if_print_states_shape is True:
+        #    print(f"#1-@zmrP@sample_action@states形状: {states.size()}")
+        #更改为++++++++++++++++++++++++++++++
+        if if_print_states_shape is False:
+            # 打印每个状态的形状，因为 states 是列表，所以逐一打印
+            for idx, state in enumerate(states):
+                print(f"#1-@zmrP@sample_action@states[{idx}]形状: {state.shape}")
         #🔴打印出形状
-        self.hidden_state_SamAct = self.hidden_state_SamAct if self.hidden_state_SamAct is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
-        value, probs, hh = self.model(new_states,self.hidden_state)
+        #BUG:-------------------原因：GRU可以处理None
+        #BUG:self.hidden_state_SamAct = self.hidden_state_SamAct if self.hidden_state_SamAct is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
+        value, probs, hh = self.model(new_states,self.hidden_state_SamAct)
         self.hidden_state_SamAct = hh
         #🔴六个智能体共用一个self.hidden_state?????
         #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -88,8 +99,9 @@ class zmrPolicy(nn.Module):
         #torch.save(self.model.state_dict(), f"{path}")
     def evaluate(self, states, actions):
         #++++++++++++++++++++++++++++++++++++++++++++++++++++
-        self.hidden_state_Eva = self.hidden_state_Eva if self.hidden_state_Eva is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
-        value, probs, hh = self.model(states,self.hidden_state)
+        #BUG:-------------------原因：GRU可以处理None
+        #self.hidden_state_Eva = self.hidden_state_Eva if self.hidden_state_Eva is not None else torch.zeros(batch_size, self.rnn_hidden_dim)
+        value, probs, hh = self.model(states,self.hidden_state_Eva)
         self.hidden_state_Eva = hh
         #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         dist = torch.distributions.Categorical(probs)
@@ -247,6 +259,7 @@ is_play = False
 #&&&&&
 def v2_train(*,env, policy,stats_recorder=None,model_version):
     model_path = f'./tmp/model/hpn_v{model_version}_model'
+    #👆合并保存位置^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     if os.path.exists(model_path):
         model_parameters = torch.load(model_path)
         policy.model.load_state_dict(model_parameters)
@@ -295,11 +308,11 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                     pprint(states[key])
                     print("--------------------------")
             if_tmp = 1
-            pprint(rewards)
+            #pprint(rewards)
             #pprint(infos)
             #pprint(rewards)
             #pprint(actions)
-            print("-----------------------------------------")
+            #print("-----------------------------------------")
             #=====================================================================================================
             for key in rewards.keys():
                 ep_rewards[key] += rewards[key]
@@ -331,6 +344,11 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 print(f'{all_train_step}SAVE_MODEL+++++++++++++++++++++++++++')
                 #policy.save_model(f'./tmp/model/hpn_v{model_version}_model')
                 #torch.save(policy.model.state_dict(), f'./tmp/model/hpn_v{model_version}_model')
+                #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+                # 确保路径存在
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                # 保存模型的状态字典
+                torch.save(policy.model.state_dict(), model_path)
 
             if dones['__all__']:
                 break

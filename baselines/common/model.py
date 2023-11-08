@@ -84,16 +84,27 @@ class Model(nn.Module):
         self.opt = optim.Adam(self.parameters(), lr=1e-3)
 
     def forward(self, states):
+        #BUG:🔴转为张量-----------------------
+        #global_feature = states[0].float()
+        #self_feature = states[1]
+        #ally0_feature = states[2]
+        #ally1_feature = states[3]
+        #enemy0_feature = states[4]
+        #enemy1_feature = states[5]
+        #enemy2_feature = states[6]
+        #if len(states) > 7: #action_mask动作掩码，不知道是否由环境返回？
+        #    action_mask = states[7].float()
+        #++++++++++++++++++++++++++++++++++
+        global_feature = torch.tensor(states[0], dtype=torch.float32)
+        self_feature = torch.tensor(states[1], dtype=torch.float32)
+        ally0_feature = torch.tensor(states[2], dtype=torch.float32)
+        ally1_feature = torch.tensor(states[3], dtype=torch.float32)
+        enemy0_feature = torch.tensor(states[4], dtype=torch.float32)
+        enemy1_feature = torch.tensor(states[5], dtype=torch.float32)
+        enemy2_feature = torch.tensor(states[6], dtype=torch.float32)
+        if len(states) > 7:
+            action_mask = torch.tensor(states[7], dtype=torch.float32)
 
-        global_feature = states[0].float()
-        self_feature = states[1]
-        ally0_feature = states[2]
-        ally1_feature = states[3]
-        enemy0_feature = states[4]
-        enemy1_feature = states[5]
-        enemy2_feature = states[6]
-        if len(states) > 7: #action_mask动作掩码，不知道是否由环境返回？
-            action_mask = states[7].float()
         global_feature = self.global_state_layer(global_feature)
         self_feature = self.self_state_layer(self_feature)
         ally0_feature = self.ally0_state_layer(ally0_feature)

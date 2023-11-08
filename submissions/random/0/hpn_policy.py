@@ -228,7 +228,7 @@ class SelfLayer(nn.Module):
         #(16             ,8           ,6           ,70      )
         my_character_type,my_role_type,my_buff_type,my_states = self.embed_net(x)
         input_tensor = torch.cat([my_character_type, my_role_type, my_buff_type,my_states], dim=1).float()
-        output = self.own(input)
+        output = self.own(input_tensor)
         return input_tensor,output #BUG:这里需要把智能体状态给输出了
         
 
@@ -348,17 +348,18 @@ class HPNPolicy(nn.Module):
             main_output_dim= 52-12, #动作空间为52，其中公有动作12个，专有动作40个
             n_heads= self.n_heads_output,
             activation_func_name='relu',
-            use_bias = False #🟠再次强调，这里的use_bias是False，意味着偏置是用hyper_output_b_action专门计算的
+            use_bias = True #🔴BUG:启用偏置
         )
-        self.hyper_output_b_action = Hypernet( #专门用来计算偏置
-            input_dim=16+8+6-3+73,     
-            hidden_dim=self.hpn_hidden_dim,
-            main_input_dim= self.rnn_hidden_dim,
-            main_output_dim= 52-12,
-            n_heads= self.n_heads_output,
-            activation_func_name='relu',
-            use_bias = False #🟠这里也是False
-        ) 
+        #-----------------------------------🔴🔴🔴🔴大更新--启用自带偏置，删除专门偏置
+        #self.hyper_output_b_action = Hypernet( #专门用来计算偏置
+        #    input_dim=16+8+6-3+73,     
+        #    hidden_dim=self.hpn_hidden_dim,
+        #    main_input_dim= self.rnn_hidden_dim,
+        #    main_output_dim= 52-12,
+        #    n_heads= self.n_heads_output,
+        #    activation_func_name='relu',
+        #    use_bias = False #🟠这里也是False
+        #) 
         
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         #(1)Global层
@@ -442,23 +443,23 @@ class HPNPolicy(nn.Module):
         #==============================================Actor网络====================================================
         #b.激活和RNN
         x = F.relu(embedding, inplace=True)
-        h_in = hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
+        h_in = None if hidden_state is None else hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
         hh = self.rnn(x, h_in)  # [bs, rnn_hidden_dim]
 
         #c.计算公有动作的价值
-        q_normal = self.output_normal_actions(hh).view(-1, self.n_agents, 12)  # [bs, n_agents, 12]
+        q_normal = self.output_normal_actions(hh).view(-1, 12)  # [bs, n_agents, 12]
 
         #d.计算专有动作价值+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         #Part1-生成权重
         # agent_feats为[batch_size, agent_feature_dim]
         # 初始输出-> [batch_size, rnn_hidden_dim * 40 * n_heads]
-        output_w_special = self.hyper_output_w_action(self_feats) #🟠只返回一个对象
-        
+        output_w_special,output_b_special = self.hyper_output_w_action(self_feats) #🟠🔴BUG:大更新，返回偏置
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         output_w_special = output_w_special.view(-1, 40 * self.n_heads_output, self.rnn_hidden_dim).transpose(1, 2)
 
         #Part2-生成偏置
-        output_b_special = self.hyper_output_b_action(self_feats).view( -1 ,40 * self.n_heads_output)  
+        #删除:-----output_b_special = self.hyper_output_b_action(self_feats).view( -1 ,40 * self.n_heads_output)
+        #🔴BUG:使用自带偏置！！！
         
         # Part3-计算Q值------通过矩阵乘法计算每个专有动作的Q值
         # [batch_size, 1, rnn_hidden_dim] * [batch_size, rnn_hidden_dim, 40 * n_heads] = [batch_size, 1, 40 * n_heads]
@@ -467,7 +468,7 @@ class HPNPolicy(nn.Module):
 
         if self.use_bias:
             # 增加一个维度使偏置与q_values的形状匹配
-            q_values += output_b_special.unsqueeze(1) #->[batch_size, 1, 40 * n_heads]
+            q_values += output_b_special.unsqueeze(1) #🔴BUG:大更新->[batch_size, 1, 40 * n_heads]
         
         #BUG:多余的平均值合并--------------------------------------------------
         #-->[batch_size, 1, 40 * n_heads]->[batch_size, 1, 40, n_heads]
