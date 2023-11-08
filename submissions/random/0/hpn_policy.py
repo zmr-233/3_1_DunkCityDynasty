@@ -51,7 +51,7 @@ class Merger_1(nn.Module):
             self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        '''合并 [batch_size, 1, n_heads, fea_dim]->[batch_size, fea_dim]
+        '''
 
         :param x: [bs, n_head, fea_dim]
         :return: [bs, fea_dim]
@@ -66,13 +66,15 @@ class Merger_1(nn.Module):
 
 class Merger_2(nn.Module):
     def __init__(self, head, fea_dim):
+        '''合并 [batch_size, 1, n_heads, fea_dim]->[batch_size, fea_dim]
+        
+        '''
         super().__init__()
         self.head = head
         self.fea_dim = fea_dim
         if head > 1:
             self.weight = nn.Parameter(torch.Tensor(1, head, fea_dim).fill_(1.))
             self.softmax = nn.Softmax(dim=1)
-        self.use_old  = False
 
     def forward(self, x):
         """
@@ -83,7 +85,9 @@ class Merger_2(nn.Module):
         if self.head > 1:
             batch_size = x.size(0)
             weight = self.weight.expand(batch_size, -1, -1)
-            return torch.sum(self.softmax(weight) * x.view(batch_size, self.head, -1), dim=1)
+            #BUG:🔵小修改，x的view的维度
+            #return torch.sum(self.softmax(weight) * x.view(batch_size, self.head, -1), dim=1)
+            return torch.sum(self.softmax(weight) * x.view(batch_size, self.head, self.fea_dim), dim=1)
         else:
             return torch.squeeze(x, dim=1)
 #c.线性层&嵌入层----------------------------------------------------------------------------------------
@@ -91,7 +95,8 @@ def embedding_layer(input_size, num_embeddings , embedding_dim, **kwargs):
     class EmbeddingLayer(nn.Module):
         def __init__(self, num_embeddings, embedding_dim, **kwargs):
             super(EmbeddingLayer, self).__init__()
-            self.layer = nn.Embedding(num_embeddings=num_embeddings, embedding_dim=embedding_dim, **kwargs)
+            self.layer = nn.Embedding(num_embeddings=num_embeddings+1, embedding_dim=embedding_dim, **kwargs)
+                                                    #👆注意潜在越界问题num_embeddings+1
         def forward(self, x: torch.Tensor):
             return self.layer(x)
     layer = EmbeddingLayer(num_embeddings, embedding_dim, **kwargs)
@@ -113,7 +118,17 @@ class AgentEmbedding(nn.Module):
         self.my_role_type_embed_layer, self.my_role_type_embed_layer_out_dim = embedding_layer([None], 8 ,8)
         self.my_buff_type_embed_layer, self.my_buff_type_embed_layer_out_dim = embedding_layer([None], 50, 6)
         #self.agent_state_dim = 16+8+6-3 + self.agent_state_len
-        self.agent_state_dim = -3 + self.agent_state_len 
+        #---------------------------
+        #self.agent_state_dim = -3 + self.agent_state_len #🟠-3可能出现问题
+        #🔵++++++++++++++++++++++++++++正确计算嵌入的总维度
+        self.agent_state_dim = self.my_character_type_embed_layer_out_dim[1] \
+                               + self.my_role_type_embed_layer_out_dim[1] \
+                               + self.my_buff_type_embed_layer_out_dim[1] \
+                               + self.agent_state_len\
+                               - 3 #这个-3从何而来?
+        #🟠-3原因是my_character_type/my_role_type/my_buff_type是属于self.agent_state_len的其中三个
+        #当把这三个转为特征向量后，就要从原来的self.agent_state_len中减去3了，这就是-3的原因
+        #因此，如下的forward传入x的长度就是73，而不处理的部分则是 my_states = x[:,3:73].float()
 
     def forward(self,x):
         my_character_type = x[:, 0].long()
@@ -147,7 +162,7 @@ class Hypernet(nn.Module):
         :return [batch_size,main_input_dim, main_output_dim * self.n_heads]: 
 
         使用方法
-         forward
+        forward
         '''
         super().__init__()
         self.main_input_dim = main_input_dim
@@ -195,21 +210,26 @@ class GlobalLayer(nn.Module):
         return x    
 #3.Self状态处理层-------------------------------------------------------------------------------------------------
 class SelfLayer(nn.Module):
-    def __init__(self,output_dim,hidden_dim=None,embed_not=None):
+    def __init__(self,output_dim,hidden_dim=None,embed_net=None):
+        super().__init__()
         self.input_dim=16+8+6-3+73
         self.output_dim = output_dim
-        self.hidden_dim = None
+        self.hidden_dim = hidden_dim
+        self.embed_net = embed_net if embed_net is not None else AgentEmbedding()
         self.own = nn.Linear(self.input_dim, self.output_dim, bias=True)
     
     def init_hidden(self):
+        '''BUG:🟠目前尚未使用隐藏层
+        
+        '''
         return self.own.weight.new(1, self.rnn_hidden_dim).zero_()
     
     def forward(self,x):
         #(16             ,8           ,6           ,70      )
         my_character_type,my_role_type,my_buff_type,my_states = self.embed_net(x)
-        input = torch.cat([my_character_type, my_role_type, my_buff_type,my_states], dim=1).float()
+        input_tensor = torch.cat([my_character_type, my_role_type, my_buff_type,my_states], dim=1).float()
         output = self.own(input)
-        return input,output #BUG:这里需要把智能体状态给输出了
+        return input_tensor,output #BUG:这里需要把智能体状态给输出了
         
 
 #4.Agent状态处理层------------------------------------------------------------------------------------------------
@@ -266,7 +286,7 @@ class AgentLayer(nn.Module):
 #4.----------------------------------------------------------------------------------------------
 
 #=================================================================================================    
-class TestPolicy(nn.Module):
+class HPNPolicy(nn.Module):
     def __init__(self,
                  hpn_hidden_dim,rnn_hidden_dim,
                  n_heads_input,n_heads_output):
@@ -282,15 +302,16 @@ class TestPolicy(nn.Module):
         #(1)states_embedding层--所有人共用一个 转为特征向量
         self.agent_embedding_net = AgentEmbedding()
         #actions_embedding层--用于合并动作
-        self.action_embedding_net = ActionEmbedding()
+        self.action_embedding_net = ActionEmbedding(embedding_dim=128)
 
         #(2)HPN层--一共有两套网络 敌人和队友
         self.hyper_input_w_ally = Hypernet( #100的输入层，256的隐藏层，如果output_dim=128，则最终的超网络要输出的权重高达...
             input_dim=16+8+6-3+73,     #100*128*5=64000的输出层
+            #🟠再提醒一次，16+8+6-3+73=100，为什么是-3已经解释过了
             hidden_dim=self.hpn_hidden_dim,
             main_input_dim=16+8+6-3+73,
             main_output_dim= self.hpn_hidden_dim,  # 确保 hpn_hidden_dim 与 output_dim 一致
-            n_heads= self.n_heads,
+            n_heads= self.n_heads_input,
             activation_func_name='relu',
             use_bias = True
         )
@@ -299,7 +320,7 @@ class TestPolicy(nn.Module):
             hidden_dim=self.hpn_hidden_dim,
             main_input_dim=16+8+6-3+73,
             main_output_dim= self.hpn_hidden_dim,
-            n_heads= self.n_heads,
+            n_heads= self.n_heads_input,
             activation_func_name='relu',
             use_bias = True
         )
@@ -308,7 +329,8 @@ class TestPolicy(nn.Module):
         #[bs, n_head, fea_dim]->[bs, fea_dim]
         self.unify_input_heads = Merger_1(self.n_heads_input, self.rnn_hidden_dim)
         #[batch_size, 1, n_heads, fea_dim]->[bs, fea_dim]
-        self.unify_output_heads = Merger_2(self.n_heads_output, 52-12) 
+        self.unify_output_heads = Merger_2(self.n_heads_output, 52-12)
+        #👆注意Merger_1和Merger_2是处理不同维度的合并，如上注释所示
         
         #(4)RNN层
         #使用 nn.GRUCell处理单个时间步长的输入
@@ -320,23 +342,23 @@ class TestPolicy(nn.Module):
         
         #B-专有技能层
         self.hyper_output_w_action = Hypernet( 
+            input_dim=16+8+6-3+73,    
+            hidden_dim=self.hpn_hidden_dim,
+            main_input_dim= self.rnn_hidden_dim,
+            main_output_dim= 52-12, #动作空间为52，其中公有动作12个，专有动作40个
+            n_heads= self.n_heads_output,
+            activation_func_name='relu',
+            use_bias = False #🟠再次强调，这里的use_bias是False，意味着偏置是用hyper_output_b_action专门计算的
+        )
+        self.hyper_output_b_action = Hypernet( #专门用来计算偏置
             input_dim=16+8+6-3+73,     
             hidden_dim=self.hpn_hidden_dim,
             main_input_dim= self.rnn_hidden_dim,
             main_output_dim= 52-12,
-            n_heads= self.n_heads,
+            n_heads= self.n_heads_output,
             activation_func_name='relu',
-            use_bias = False
-        )
-        self.hyper_output_b_action = Hypernet( 
-            input_dim=16+8+6-3+73,     
-            hidden_dim=self.hpn_hidden_dim,
-            main_input_dim= self.rnn_hidden_dim,
-            main_output_dim= 52-12,
-            n_heads= self.n_heads,
-            activation_func_name='relu',
-            use_bias = False
-        )
+            use_bias = False #🟠这里也是False
+        ) 
         
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         #(1)Global层
@@ -344,21 +366,21 @@ class TestPolicy(nn.Module):
         
         #(2)Self层 分为critic和actor网络
         self.self_state_layer = SelfLayer(rnn_hidden_dim)
-        self.self_state_layer_2 = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.self_state_layer_2 = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net,self.hyper_input_w_ally)
 
         #(3)ally层 -- 其中没有新增任何神经网络-相当于集成
-        self.ally0_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.ally0_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net,self.hyper_input_w_ally)
-        self.ally1_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.ally1_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net,self.hyper_input_w_ally)
 
         #(4)enemy层
-        self.enemy0_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.enemy0_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
-        self.enemy1_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.enemy1_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
-        self.enemy2_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads,
+        self.enemy2_state_layer = AgentLayer(rnn_hidden_dim,self.n_heads_input,
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
 
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -374,7 +396,7 @@ class TestPolicy(nn.Module):
         )
         
         # 定义优化器
-        self.opt = optim.Adam(self.parameters(), lr=1e-3)
+        self.opt = optim.Adam(self.parameters(), lr=1e-3) #🔴如何初始化所有参数?
     
     def forward(self,states,hidden_state):
         global_feature = states[0].float()
@@ -386,11 +408,13 @@ class TestPolicy(nn.Module):
         enemy2_feature = states[6]
         if len(states) > 7: #action_mask动作掩码
             action_mask = states[7].float()
+        
         #(1)Global层
         global_embedding = self.global_state_layer(global_feature)
         
         #(2)Self层 
         self_feats, self_embedding = self.self_state_layer(self_feature)
+        #👆这里返回的self_feats是用于给self.hyper_output_w_action的输入
 
         #(3)ally层 
         ally0_feature = self.ally0_state_layer(ally0_feature)
@@ -428,13 +452,13 @@ class TestPolicy(nn.Module):
         #Part1-生成权重
         # agent_feats为[batch_size, agent_feature_dim]
         # 初始输出-> [batch_size, rnn_hidden_dim * 40 * n_heads]
-        output_w_special, _ = self.hyper_output_w_action(self_feats)
+        output_w_special = self.hyper_output_w_action(self_feats) #🟠只返回一个对象
         
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        output_w_special = output_w_special.view(-1, 40 * self.n_heads, self.rnn_hidden_dim).transpose(1, 2)
+        output_w_special = output_w_special.view(-1, 40 * self.n_heads_output, self.rnn_hidden_dim).transpose(1, 2)
 
         #Part2-生成偏置
-        output_b_special = self.hyper_output_b_action(self_feats).view( -1 ,40 * self.n_heads)  
+        output_b_special = self.hyper_output_b_action(self_feats).view( -1 ,40 * self.n_heads_output)  
         
         # Part3-计算Q值------通过矩阵乘法计算每个专有动作的Q值
         # [batch_size, 1, rnn_hidden_dim] * [batch_size, rnn_hidden_dim, 40 * n_heads] = [batch_size, 1, 40 * n_heads]
@@ -447,7 +471,7 @@ class TestPolicy(nn.Module):
         
         #BUG:多余的平均值合并--------------------------------------------------
         #-->[batch_size, 1, 40 * n_heads]->[batch_size, 1, 40, n_heads]
-        #q_values_unified = q_values.view(-1, 1, 40, self.n_heads).mean(dim=-1)
+        #q_values_unified = q_values.view(-1, 1, 40, self.n_heads_output).mean(dim=-1)
         
         #使用复杂的权重矩阵合并+++++++++++++++++++++++++++++++++++++++++++++++++
         #->[batch_size, 1, 40, n_heads]-->[batch_size, 40]
@@ -468,10 +492,20 @@ class TestPolicy(nn.Module):
             mask_q = q * action_mask + (1 - action_mask) * large_negative
             # 对调整后的logits应用softmax，转换为概率
             probs = nn.functional.softmax(mask_q, dim=-1)
-            return value.float(), probs.float()
+            return value.float(), probs.float(), hh
         else:
             #BUG:如果没有掩码，直接对原始Q值应用softmax转换为概率
             probs = nn.functional.softmax(q, dim=-1)
-            return value.float(), probs.float()
+            return value.float(), probs.float(), hh
+        
 
-
+#=================================================================================================    
+#
+#
+#
+#=================================================================================================
+#1.BC离线训练环境
+class TrainHPC(nn.Module):
+    def __init__(self):
+        pass
+#==================================================================================================
