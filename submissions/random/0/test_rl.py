@@ -18,15 +18,21 @@ from hpn_policy import *
 class zmrPolicy(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        #----------------------------------------------
-        # 主要调参
-        self.hpn_hidden_dim = 128
-        self.rnn_hidden_dim = 128
-        self.n_heads_input = 3
-        self.n_heads_output = 3
-
         self.hidden_state_SamAct = None
         self.hidden_state_Eva = None
+        #----------------------------------------------
+        #hpn_output  lr=1e-3
+        #self.hpn_hidden_dim = 128
+        #self.rnn_hidden_dim = 128
+        #self.n_heads_input = 3
+        #self.n_heads_output = 3
+        #----------------------------------------------
+        #hpn_linear_1 lr=1e-4
+        self.hpn_hidden_dim = 128
+        self.rnn_hidden_dim = 128
+        self.n_heads_input = 4
+        self.n_heads_output = 4
+
         #----------------------------------------------
         self.memory = Memory()
         self.model = HPNPolicy(self.hpn_hidden_dim, self.rnn_hidden_dim,
@@ -233,32 +239,40 @@ def create_env(id=1):
     wrapper = RLWrapper({})
     env = GymEnv(env_config, wrapper=wrapper)
     return env
-
+#&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+is_play = False #是否正式运行
+is_record = False #是否记录
+is_train = True #是否训练
+#&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
 class ZmrRecorder:
     def __init__(self,*,version) -> None:
-        self.writers = {}
-        self.writer_types = ['Play','Policy']
-        for writter_type in self.writer_types: 
-            self.writers[writter_type] = SummaryWriter(f'./tmp/hpn_v{version}_{writter_type}',flush_secs=5)
-                                                                #👆这里版本注意修改
+        if is_record ==True:
+            self.writers = {}
+            self.writer_types = ['Play','Policy']
+            for writter_type in self.writer_types: 
+                self.writers[writter_type] = SummaryWriter(f'./tmp/hpn_v{version}_{writter_type}',flush_secs=5)
+                                                                    #👆这里版本注意修改
     
-    def add_scalar(self,w_type,*,tag,scalar_value,global_step): 
-        self.writers[w_type].add_scalar(tag=tag, scalar_value=scalar_value, global_step = global_step)
+    def add_scalar(self,w_type,*,tag,scalar_value,global_step):
+        if is_record ==True:
+            self.writers[w_type].add_scalar(tag=tag, scalar_value=scalar_value, global_step = global_step)
     
     def add_rewards(self, rewards,all_ep_step): #🟢注意:all_ep_step应该为cnt*n+step
-        for key in rewards.keys():
-            self.add_scalar('Play',tag=f'rewards/reward_{key}',scalar_value=rewards[key],global_step=all_ep_step)
+        if is_record ==True:
+            for key in rewards.keys():
+                self.add_scalar('Play',tag=f'rewards/reward_{key}',scalar_value=rewards[key],global_step=all_ep_step)
     def add_policy_loss(self, loss,all_ep_step):
-        self.add_scalar('Policy',tag=f'loss/policy_loss',scalar_value=loss,global_step=all_ep_step)
+        if is_record ==True:
+            self.add_scalar('Policy',tag=f'loss/policy_loss',scalar_value=loss,global_step=all_ep_step)
     def add_value_loss(self, loss, all_ep_step):
-        self.add_scalar('Policy',tag=f'loss/value_loss',scalar_value=loss,global_step=all_ep_step)
+        if is_record ==True:
+            self.add_scalar('Policy',tag=f'loss/value_loss',scalar_value=loss,global_step=all_ep_step)
     def close(self):
-        for writer in self.writters.values():
-            writer.close()
+        if is_record ==True:
+            for writer in self.writters.values():
+                writer.close()
 
-#&&&&&是否正式运行
-is_play = False
-#&&&&&
+
 def v2_train(*,env, policy,stats_recorder=None,model_version):
     model_path = f'./tmp/model/hpn_v{model_version}_model'
     #👆合并保存位置^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -274,9 +288,11 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
     all_train_step = 0
     if_tmp = 0
     key_l = {0:0,1:0,2:0,3:0,4:0,5:0}
+    states, infos = env.reset()
+    #👆移动在外面
     for i in range(1000000):
         exps = []
-        states, infos = env.reset()
+        #states, infos = env.reset()
         ep_rewards = defaultdict(int)
         ep_step = 0
         while True:
@@ -322,7 +338,8 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 ep_step = 0
                 ep_cnt += 1
                 #stats_recorder.add_rewards(ep_rewards, ep_cnt)
-            stats_recorder.add_rewards(rewards,all_ep_step)
+            if is_train == True:
+                stats_recorder.add_rewards(rewards,all_ep_step)
 
             for key in share_keys:
                 state = states[key]
@@ -336,10 +353,10 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 #(Policy.get_actions)self.log_probs = {}
                 #每次选择动作后，都会重置
     #==================================🟠👆注意这个log_probs是从policy里出来的
-                exp = Exp(state=state,next_state=next_state,action=action,reward=reward,done=done,log_probs=log_probs,truncated=truncat)
-                exps.append(exp)
-            #🐞if len(exps) >= 512:
-            if len(exps) >= 12:
+                if is_train == True:
+                    exp = Exp(state=state,next_state=next_state,action=action,reward=reward,done=done,log_probs=log_probs,truncated=truncat)
+                    exps.append(exp)
+            if len(exps) >= 512 and is_train == True:
                 policy.memory.push(exps)
                 policy.update(stats_recorder = stats_recorder,all_train_step=all_train_step)
                 exps = []
@@ -354,7 +371,8 @@ def v2_train(*,env, policy,stats_recorder=None,model_version):
                 torch.save(policy.model.state_dict(), model_path)
             states = next_states
             if dones['__all__']:
-                env.close()
+                #env.close()
+                #👆不关闭环境
                 break
             
 

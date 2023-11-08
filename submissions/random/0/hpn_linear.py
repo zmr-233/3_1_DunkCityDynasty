@@ -348,7 +348,7 @@ class HPNPolicy(nn.Module):
         #(4)RNN层
         #使用 nn.GRUCell处理单个时间步长的输入
         #
-        self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
+        #🔴self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         
         #A-公有动作层
         self.output_normal_actions = nn.Linear(self.rnn_hidden_dim, 12) 
@@ -398,6 +398,18 @@ class HPNPolicy(nn.Module):
                                             self.agent_embedding_net, self.hyper_input_w_anemy)
 
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        #定义actor层
+        self.actor_input_dim  = 4 * self.rnn_hidden_dim #512
+        self.actor_hidden_dim = 6 * self.rnn_hidden_dim
+        self.actor_output_dim = self.rnn_hidden_dim
+        self.actor_layer = nn.Sequential(
+            nn.Linear(self.actor_input_dim, self.actor_hidden_dim),  # 第一层从输入维度到256个神经元
+            nn.ReLU(),                             # ReLU激活函数
+            nn.Linear(self.actor_hidden_dim, self.actor_hidden_dim),                   # 第二层从256到128个神经元
+            nn.ReLU(),                             # 又一个ReLU激活函数
+            nn.Linear(self.actor_hidden_dim, self.actor_output_dim)  # 输出层从128到输出维度
+            # 注意：如果你的动作空间是离散的，可能需要在这里添加一个 softmax 函数
+        )
 
         #定义critic层
         self.critic_input_dim  = 3 * self.rnn_hidden_dim
@@ -405,8 +417,9 @@ class HPNPolicy(nn.Module):
         self.critic_layer = nn.Sequential(
             nn.Linear(self.critic_input_dim, self.critic_hidden_dim ), 
             nn.ReLU(), 
-            nn.Linear(self.critic_hidden_dim , 1), 
-            nn.ReLU()
+            nn.Linear(self.critic_hidden_dim , self.critic_hidden_dim), 
+            nn.ReLU(),
+            nn.Linear(self.critic_hidden_dim , 1),
         )
         
         # 定义优化器
@@ -450,46 +463,49 @@ class HPNPolicy(nn.Module):
 
         #a.合并层
         #BUG:此处使用加法层==========================================================================================
-        embedding = global_embedding + self_embedding + ally_embedding + enemy_embedding
-        
+        #embedding = global_embedding + self_embedding + ally_embedding + enemy_embedding
+        embedding_actor = torch.cat([global_embedding,self_embedding,ally_embedding,enemy_embedding],dim = 1).float()
+
         self_embedding_2 = self.self_state_layer_2(self_feature)
         ally_embedding_2 = ally_embedding + self.unify_input_heads(self_embedding_2)
         embedding_critic = torch.cat([global_embedding,ally_embedding_2,enemy_embedding],dim = 1).float()
 
-        #==============================================Actor网络====================================================
-        if self.net_mode == 'rl':
-            #b.激活和RNN
-            x = F.relu(embedding, inplace=True)
-            #🐞h_in = None if hidden_state is None else hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
-            
-            #BUG:BC中批次大小不同的问题-------------------------------------------
-            #++++++批次大小不同的问题🔴🔴🔴🔴🔴🔴🔴🔴🔴++++++++++++++++++++++
-            # 检查 self.h_in 是否存在，如果存在，检查批次大小是否需要调整
-            #if self.h_in is not None:
-            #    current_batch_size = x.size(0)  # 获取 x 的批次大小
-            #    h_in_batch_size = self.h_in.size(0)
-            #
-            #    if h_in_batch_size > current_batch_size:
-            #        self.h_in = self.h_in[:current_batch_size, :].contiguous()
-            #    elif h_in_batch_size < current_batch_size:
-            #        self.h_in = None
-            #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-            h_in_to_use = None
-            if self.h_in is not None:
-                current_batch_size = x.size(0)
-                h_in_batch_size = self.h_in.size(0)
-                if h_in_batch_size != current_batch_size:
-                    print(f"{current_batch_size} -> {h_in_batch_size}")
-                    h_in_to_use = None
-                else:
-                    h_in_to_use = self.h_in
-                    print(">",end='')
-            #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            hh = self.rnn(x, h_in_to_use)  # [bs, rnn_hidden_dim]
-            self.h_in = hh
-        elif self.net_mode == 'bc':
-            hh = self.rnn(x, None)
-
+        #==============================================Actor-RNN网络====================================================
+        #b.激活和RNN
+        #x = F.relu(embedding, inplace=True)
+        #🐞h_in = None if hidden_state is None else hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
+        
+        #BUG:BC中批次大小不同的问题-------------------------------------------
+        #++++++批次大小不同的问题🔴🔴🔴🔴🔴🔴🔴🔴🔴++++++++++++++++++++++
+        # 检查 self.h_in 是否存在，如果存在，检查批次大小是否需要调整
+        #if self.h_in is not None:
+        #    current_batch_size = x.size(0)  # 获取 x 的批次大小
+        #    h_in_batch_size = self.h_in.size(0)
+        #
+        #    if h_in_batch_size > current_batch_size:
+        #        self.h_in = self.h_in[:current_batch_size, :].contiguous()
+        #    elif h_in_batch_size < current_batch_size:
+        #        self.h_in = None
+        #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        #if self.h_in is not None:
+        #    current_batch_size = x.size(0)
+        #    h_in_batch_size = self.h_in.size(0)
+        #    if h_in_batch_size != current_batch_size:
+        #        print(f"{current_batch_size} -> {h_in_batch_size}")
+        #        self.h_in = None
+        #    else:
+        #        print(">",end='')
+        #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        #if self.net_mode == 'rl':
+        #    hh = self.rnn(x, self.h_in)  # [bs, rnn_hidden_dim]
+        #    self.h_in = hh
+        #elif self.net_mode == 'bc':
+        #    hh = self.rnn(x, None)
+        
+        #==============================================Actor-Line网络====================================================
+        hh = self.actor_layer(embedding_actor)
+        #================================================================================================================
+        
         #c.计算公有动作的价值
         q_normal = self.output_normal_actions(hh).view(-1, 12)  # [bs, n_agents, 12]
 

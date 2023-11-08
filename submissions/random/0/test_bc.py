@@ -9,7 +9,7 @@ from test_bc_utils import download_human_data
 #from baselines.common.model import Model
 
 
-from hpn_policy import *
+from hpn_linear import *
 
 class Config:
     def __init__(self) -> None:
@@ -32,8 +32,8 @@ def train(cfg):
     # 主要调参
     hpn_hidden_dim = 128
     rnn_hidden_dim = 128
-    n_heads_input = 3
-    n_heads_output = 3
+    n_heads_input = 2
+    n_heads_output = 2
 
     hidden_state_SamAct = None
     hidden_state_Eva = None
@@ -41,7 +41,7 @@ def train(cfg):
     model = HPNPolicy(hpn_hidden_dim, rnn_hidden_dim,
                             n_heads_input, n_heads_output,
                             net_mode ='bc').to(cfg.device)
-    model_path = f'./hpn_output/hpn_bc_model'
+    model_path = f'./hpn_linear_1_output/hpn_linear_1_bc_model'
     #👆合并保存位置^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     if os.path.exists(model_path):
         model_parameters = torch.load(model_path)
@@ -52,7 +52,7 @@ def train(cfg):
     #model.load_state_dict(model_parameters)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    tb_writer = SummaryWriter(f"./hpn_output/logs/")
+    tb_writer = SummaryWriter(f"./hpn_linear_1_output/logs/")
     step = 0
     for i_epoch in range(cfg.n_epoch):
         for i_batch, (global_state, self_state, ally0_state, ally1_state, enemy0_state, enemy1_state, enemy2_state, action, weight) in enumerate(train_dataloader):
@@ -95,7 +95,7 @@ def train(cfg):
                 print(f'Epoch: {i_epoch}, Batch: {i_batch}, Loss: {loss.item()}, test_acc: {test_accuracy}')
                 tb_writer.add_scalar('loss', loss, step)
                 tb_writer.add_scalar('acc', test_accuracy, step)
-                torch.save(model.state_dict(), f"./hpn_output/hpn_bc_model")
+                torch.save(model.state_dict(), f"./hpn_linear_1_output/hpn_linear_1_bc_model")
 
 
 if __name__ == '__main__':
