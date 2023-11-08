@@ -1,6 +1,6 @@
-import sys,os
-import gymnasium as gym
-import numpy as np
+#import sys,os
+#import gymnasium as gym
+#import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -363,18 +363,15 @@ class TestPolicy(nn.Module):
 
         #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-        #定义share层
-        self.share_hidden_dim  = 256
-        self.share_layer = nn.Sequential(
-            nn.Linear(self.rnn_hidden_dim * 3, self.share_hidden_dim), 
+        #定义critic层
+        self.critic_input_dim  = 3 * self.rnn_hidden_dim
+        self.critic_hidden_dim = 5 * self.rnn_hidden_dim
+        self.critic_layer = nn.Sequential(
+            nn.Linear(self.critic_input_dim, self.critic_hidden_dim ), 
             nn.ReLU(), 
-            nn.Linear(self.share_hidden_dim, 128), 
+            nn.Linear(self.critic_hidden_dim , 1), 
             nn.ReLU()
         )
-
-        # 定义输出层
-        self.value_layer = nn.Sequential(nn.Linear(128, 1))
-        self.action_layer = nn.Sequential(nn.Linear(128, 52))
         
         # 定义优化器
         self.opt = optim.Adam(self.parameters(), lr=1e-3)
@@ -421,7 +418,7 @@ class TestPolicy(nn.Module):
         #==============================================Actor网络====================================================
         #b.激活和RNN
         x = F.relu(embedding, inplace=True)
-        h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
+        h_in = hidden_state.reshape(-1, self.rnn_hidden_dim) #首次运行使用零状态: h_in = torch.zeros(batch_size, rnn_hidden_dim)
         hh = self.rnn(x, h_in)  # [bs, rnn_hidden_dim]
 
         #c.计算公有动作的价值
@@ -459,10 +456,22 @@ class TestPolicy(nn.Module):
 
         
         q = torch.cat([q_normal,q_values],dim=-1)
-
         #转为概率
-        action_probs = F.softmax(q, dim=-1)
-        #==============================================Critic网络====================================================
+        #logits_p = F.softmax(q, dim=-1)
 
+        #==============================================Critic网络====================================================
+        value = self.critic_layer(embedding_critic)
+        
+        if len(states) > 7:  # 如果有动作掩码
+            large_negative = torch.finfo(q.dtype).min if q.dtype == torch.float32 else -1e9
+            # 应用掩码，未掩码的保持原值，掩码的设置为非常小的值
+            mask_q = q * action_mask + (1 - action_mask) * large_negative
+            # 对调整后的logits应用softmax，转换为概率
+            probs = nn.functional.softmax(mask_q, dim=-1)
+            return value.float(), probs.float()
+        else:
+            #BUG:如果没有掩码，直接对原始Q值应用softmax转换为概率
+            probs = nn.functional.softmax(q, dim=-1)
+            return value.float(), probs.float()
 
 
